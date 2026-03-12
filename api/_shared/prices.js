@@ -23,19 +23,19 @@ const DISPLAY_ROWS = {
 const CALIBRATION = {
   goldKgUsd: {
     buyFactor: Number(process.env.GOLDAPI_GOLD_KG_USD_BUY_FACTOR || 1.00035),
-    sellFactor: Number(process.env.GOLDAPI_GOLD_KG_USD_SELL_FACTOR || 1.00395)
+    sellFactor: Number(process.env.GOLDAPI_GOLD_KG_USD_SELL_FACTOR || 1.00405)
   },
   goldKgEur: {
-    buyFactor: Number(process.env.GOLDAPI_GOLD_KG_EUR_BUY_FACTOR || 1.00545),
-    sellFactor: Number(process.env.GOLDAPI_GOLD_KG_EUR_SELL_FACTOR || 1.01145)
+    buyFactor: Number(process.env.GOLDAPI_GOLD_KG_EUR_BUY_FACTOR || 1.0053),
+    sellFactor: Number(process.env.GOLDAPI_GOLD_KG_EUR_SELL_FACTOR || 1.0113)
   },
   goldOnsUsd: {
     buyFactor: Number(process.env.GOLDAPI_GOLD_ONS_USD_BUY_FACTOR || 1.00055),
-    sellFactor: Number(process.env.GOLDAPI_GOLD_ONS_USD_SELL_FACTOR || 1.00415)
+    sellFactor: Number(process.env.GOLDAPI_GOLD_ONS_USD_SELL_FACTOR || 1.00425)
   },
   goldOnsEur: {
-    buyFactor: Number(process.env.GOLDAPI_GOLD_ONS_EUR_BUY_FACTOR || 1.00565),
-    sellFactor: Number(process.env.GOLDAPI_GOLD_ONS_EUR_SELL_FACTOR || 1.01165)
+    buyFactor: Number(process.env.GOLDAPI_GOLD_ONS_EUR_BUY_FACTOR || 1.0055),
+    sellFactor: Number(process.env.GOLDAPI_GOLD_ONS_EUR_SELL_FACTOR || 1.0115)
   },
   silvKgEur: {
     buyFactor: Number(process.env.GOLDAPI_SILVER_KG_EUR_BUY_FACTOR || 0.9905),
