@@ -154,6 +154,14 @@
       return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"></path><path d="M15 8l4 4-4 4"></path></svg>';
     }
 
+    function providerSuffix(){
+      if(providerName === 'goldapi-fallback'){
+        return '';
+      }
+      const label = PROVIDER_LABEL[providerName] ?? providerName;
+      return label ? ` | ${label}` : '';
+    }
+
     async function loadFromLocalApi(){
       const resp = await fetch(API_URL);
       if(!resp.ok){
@@ -223,7 +231,7 @@
           second: '2-digit',
           hour12: true
         });
-        st.textContent = `Perditesuar ${stamp} | ${PROVIDER_LABEL[providerName] ?? providerName}`;
+        st.textContent = `Perditesuar ${stamp}${providerSuffix()}`;
         st.style.color = '#2F6666';
         st.style.background = 'rgba(255,255,255,.7)';
         st.style.borderColor = 'rgba(47,102,102,.14)';
@@ -237,7 +245,7 @@
           second: '2-digit',
           hour12: true
         });
-        st.textContent = `Vlerat e fundit nga API ${staleStamp} | ${PROVIDER_LABEL[providerName] ?? providerName}`;
+        st.textContent = `Vlerat e fundit nga API ${staleStamp}${providerSuffix()}`;
         st.style.color = '#8b6a32';
         st.style.background = 'rgba(255,249,236,.86)';
         st.style.borderColor = 'rgba(183,138,53,.18)';
