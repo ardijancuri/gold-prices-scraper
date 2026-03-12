@@ -3,6 +3,18 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
+const {
+  GOLD_API_XAU_URL,
+  GOLD_API_XAG_URL,
+  FX_API_URL,
+  transformNadirRows,
+  buildRawGoldApiRows,
+  deriveCalibrationProfile,
+  buildGoldApiFallbackRows,
+  parseGoldApiPrice,
+  parseFxUsdEur,
+  isNadirDisabled
+} = require('./api/_shared/prices');
 
 const PORT = Number(process.env.PORT || 3000);
 const TARGET_URL = 'https://www.nadirdoviz.com/fiyat-ekrani';
@@ -67,6 +79,12 @@ const cache = {
   lastAttemptAt: 0,
   source: 'nadirdoviz-browser',
   lastError: null
+};
+
+const calibrationState = {
+  profile: null,
+  lastNadirRows: null,
+  updatedAt: 0
 };
 
 const browserState = {
@@ -381,6 +399,23 @@ async function fetchJson(url) {
     throw new Error(`DevTools request failed: ${response.status}`);
   }
   return response.json();
+}
+
+async function fetchExternalJson(url, label) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, {
+      headers: { 'Cache-Control': 'no-cache' },
+      signal: controller.signal
+    });
+    if (!response.ok) {
+      throw new Error(`${label} HTTP ${response.status}`);
+    }
+    return response.json();
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function waitForDevToolsList() {
@@ -803,12 +838,54 @@ async function getRowsFromInternalFeed() {
 async function getRowsFromRenderedDom() {
   const snapshot = await getRenderedSnapshot();
   browserState.lastRenderedSample = snapshot.text.slice(0, 1200);
-  const rows = parseRowsFromHtml(snapshot.html);
+  const rows = transformNadirRows(parseRowsFromHtml(snapshot.html));
   return {
     source: 'nadirdoviz-dom',
     rows,
     snapshot
   };
+}
+
+async function getRowsFromGoldApiFallback() {
+  const [goldPayload, silverPayload, fxPayload] = await Promise.all([
+    fetchExternalJson(GOLD_API_XAU_URL, 'Gold API XAU'),
+    fetchExternalJson(GOLD_API_XAG_URL, 'Gold API XAG'),
+    fetchExternalJson(FX_API_URL, 'FX API USD/EUR')
+  ]);
+
+  const baseRates = {
+    goldOnsUsd: parseGoldApiPrice(goldPayload, 'XAU'),
+    silvOnsUsd: parseGoldApiPrice(silverPayload, 'XAG'),
+    usdToEur: parseFxUsdEur(fxPayload)
+  };
+  const rawRows = buildRawGoldApiRows(baseRates);
+  const profile = calibrationState.profile
+    || (calibrationState.lastNadirRows ? deriveCalibrationProfile(calibrationState.lastNadirRows, rawRows) : null);
+
+  return {
+    source: 'goldapi-fallback',
+    rows: buildGoldApiFallbackRows(baseRates, profile)
+  };
+}
+
+async function refreshCalibrationFromNadir(rows) {
+  try {
+    const [goldPayload, silverPayload, fxPayload] = await Promise.all([
+      fetchExternalJson(GOLD_API_XAU_URL, 'Gold API XAU calibration'),
+      fetchExternalJson(GOLD_API_XAG_URL, 'Gold API XAG calibration'),
+      fetchExternalJson(FX_API_URL, 'FX API USD/EUR calibration')
+    ]);
+    const rawRows = buildRawGoldApiRows({
+      goldOnsUsd: parseGoldApiPrice(goldPayload, 'XAU'),
+      silvOnsUsd: parseGoldApiPrice(silverPayload, 'XAG'),
+      usdToEur: parseFxUsdEur(fxPayload)
+    });
+    calibrationState.profile = deriveCalibrationProfile(rows, rawRows);
+    calibrationState.lastNadirRows = rows;
+    calibrationState.updatedAt = Date.now();
+  } catch {
+    calibrationState.lastNadirRows = rows;
+  }
 }
 
 async function collectLiveRows() {
@@ -836,6 +913,16 @@ function isCacheFresh() {
   return hasCache() && cache.expiresAt > Date.now();
 }
 
+function canUseFreshCache() {
+  if (!isCacheFresh()) {
+    return false;
+  }
+  if (isNadirDisabled() && cache.source !== 'goldapi-fallback') {
+    return false;
+  }
+  return true;
+}
+
 function buildPayload({ cached, stale }) {
   return {
     provider: cache.source,
@@ -848,7 +935,7 @@ function buildPayload({ cached, stale }) {
 }
 
 async function getPrices() {
-  if (isCacheFresh()) {
+  if (canUseFreshCache()) {
     return buildPayload({ cached: true, stale: false });
   }
 
@@ -858,8 +945,14 @@ async function getPrices() {
 
   inFlight = (async () => {
     cache.lastAttemptAt = Date.now();
+    const nadirDisabled = isNadirDisabled();
     try {
-      const result = await collectLiveRows();
+      const result = nadirDisabled
+        ? await getRowsFromGoldApiFallback()
+        : await collectLiveRows();
+      if (!nadirDisabled) {
+        await refreshCalibrationFromNadir(result.rows);
+      }
       cache.value = result.rows;
       cache.fetchedAt = Date.now();
       cache.expiresAt = cache.fetchedAt + CACHE_TTL_MS;
@@ -868,7 +961,15 @@ async function getPrices() {
       cache.lastError = null;
       return buildPayload({ cached: false, stale: false });
     } catch (error) {
-      cache.lastError = String(error.message || error);
+      if (nadirDisabled) {
+        cache.lastError = `Gold API failed: ${String(error.message || error)}`;
+        if (hasCache() && cache.source === 'goldapi-fallback') {
+          return buildPayload({ cached: true, stale: true });
+        }
+        throw error;
+      }
+
+      cache.lastError = `Nadir failed: ${String(error.message || error)}`;
       try {
         await ensureBrowserSession({ forceReload: true });
         const retryResult = await collectLiveRows();
@@ -880,11 +981,23 @@ async function getPrices() {
         cache.lastError = null;
         return buildPayload({ cached: false, stale: false });
       } catch (retryError) {
-        cache.lastError = String(retryError.message || retryError);
-        if (hasCache()) {
-          return buildPayload({ cached: true, stale: true });
+        const retryMessage = String(retryError.message || retryError);
+        try {
+          const fallbackResult = await getRowsFromGoldApiFallback();
+          cache.value = fallbackResult.rows;
+          cache.fetchedAt = Date.now();
+          cache.expiresAt = cache.fetchedAt + CACHE_TTL_MS;
+          cache.lastSuccessAt = cache.fetchedAt;
+          cache.source = fallbackResult.source;
+          cache.lastError = `Nadir failed: ${retryMessage}`;
+          return buildPayload({ cached: false, stale: false });
+        } catch (fallbackError) {
+          cache.lastError = `Nadir failed: ${retryMessage}; Gold API failed: ${String(fallbackError.message || fallbackError)}`;
+          if (hasCache()) {
+            return buildPayload({ cached: true, stale: true });
+          }
+          throw fallbackError;
         }
-        throw retryError;
       }
     } finally {
       inFlight = null;
@@ -949,7 +1062,18 @@ async function requestListener(request, response) {
       ok: true,
       service: 'argjira-prices-api',
       provider: cache.source,
+      fallbackProvider: 'goldapi-fallback',
+      nadirDisabled: isNadirDisabled(),
       targetUrl: TARGET_URL,
+      goldApiFallback: {
+        xauUrl: GOLD_API_XAU_URL,
+        xagUrl: GOLD_API_XAG_URL,
+        fxUrl: FX_API_URL
+      },
+      calibration: {
+        learned: Boolean(calibrationState.profile),
+        updatedAt: calibrationState.updatedAt ? new Date(calibrationState.updatedAt).toISOString() : null
+      },
       browserPath: browserState.browserPath,
       browser: {
         mode: BROWSER_MODE,
@@ -1008,7 +1132,7 @@ async function requestListener(request, response) {
     } catch (error) {
       writeJson(response, 503, {
         ok: false,
-        error: 'Failed to fetch Nadir prices.',
+        error: 'Failed to fetch prices.',
         details: String(error.message || error)
       });
     }
@@ -1062,7 +1186,9 @@ function startServer(port = PORT) {
 
   server.listen(port, () => {
     console.log(`Argjira API listening on http://localhost:${port}`);
-    getPrices().catch(() => {});
+    if (!isNadirDisabled()) {
+      getPrices().catch(() => {});
+    }
   });
 
   return server;

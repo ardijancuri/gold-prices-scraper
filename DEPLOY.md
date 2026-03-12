@@ -1,6 +1,6 @@
 ## Deployment
 
-This version is designed for Vercel plus a remote Browserless browser.
+This version is designed for Vercel plus a remote Browserless browser, with Gold API plus FX as the backend fallback.
 
 ### Vercel
 
@@ -24,6 +24,16 @@ Optional:
 - `BROWSERLESS_BASE_URL`
   - default: `wss://production-sfo.browserless.io`
 - `NADIR_FUNCTION_TIMEOUT_MS`
+- `GOLDAPI_GOLD_KG_USD_BUY_FACTOR`
+- `GOLDAPI_GOLD_KG_USD_SELL_FACTOR`
+- `GOLDAPI_GOLD_KG_EUR_BUY_FACTOR`
+- `GOLDAPI_GOLD_KG_EUR_SELL_FACTOR`
+- `GOLDAPI_GOLD_ONS_USD_BUY_FACTOR`
+- `GOLDAPI_GOLD_ONS_USD_SELL_FACTOR`
+- `GOLDAPI_GOLD_ONS_EUR_BUY_FACTOR`
+- `GOLDAPI_GOLD_ONS_EUR_SELL_FACTOR`
+- `GOLDAPI_SILVER_KG_EUR_BUY_FACTOR`
+- `GOLDAPI_SILVER_KG_EUR_SELL_FACTOR`
 
 Examples:
 
@@ -43,18 +53,23 @@ Expected `/api/health`:
 
 - `ok: true`
 - `browserlessConfigured: true`
+- `goldApiFallback.xauUrl`
+- `goldApiFallback.xagUrl`
+- `goldApiFallback.fxUrl`
 
 Expected `/api/prices`:
 
-- `provider: "nadirdoviz-browserless"`
+- `provider: "nadirdoviz-browserless"` or `provider: "goldapi-fallback"`
 - `rows.goldKgUsd`
 - `rows.goldKgEur`
-- `rows.silvOns`
-- `rows.silvKgUsd`
+- `rows.goldOnsUsd`
+- `rows.goldOnsEur`
 - `rows.silvKgEur`
 
 ### Notes
 
 - There is no Render, Netlify, or Docker requirement in this version.
 - Browser execution happens through Browserless, not inside the Vercel function runtime.
+- If Browserless fails, `/api/prices` falls back to Gold API plus USD/EUR FX and calibrates those values toward Nadir-style pricing.
+- After at least one successful Nadir scrape, the fallback learns row-specific calibration from that last successful Nadir snapshot.
 - `server.js` is no longer the deployment path for Vercel.
